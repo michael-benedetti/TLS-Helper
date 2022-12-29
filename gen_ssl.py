@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Set, Dict
 
+from OpenSSL import crypto
+
 COREDNS_TEMPLATE = """\
 $ORIGIN [TOPLEVEL]
 @   3600 IN SOA sns.dns.icann.org. noc.dns.icann.org. (
@@ -21,36 +23,6 @@ $ORIGIN [TOPLEVEL]
         3600 IN NS b.iana-servers.net.
 
 [ENTRIES]
-"""
-
-SAN_CNF_TEMPLATE = """\
-[req]
-default_bits            = 2048
-distinguished_name      = req_distinguished_name
-req_extensions          = req_ext
-
-[req_distinguished_name]
-countryName             = Country Name (2 letter code)
-stateOrProvinceName     = State or Province Name (full name)
-localityName            = Locality Name (eg, city)
-organizationName        = Organization Name (eg, company)
-commonName              = Common Name (e.g. server FQDN or YOUR name)
-
-[req_ext]
-subjectAltName          = @alt_names
-
-[alt_names]
-[ALT_NAMES_HERE]
-"""
-
-WEBCERT_EXT_TEMPLATE = """\
-authorityKeyIdentifier = keyid,issuer
-basicConstraints = CA:FALSE
-keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
-subjectAltName = @alt_names
-
-[ alt_names ]
-[ALT_NAMES_HERE]
 """
 
 VALID_CHARS = string.ascii_letters + string.digits + ".-_"
@@ -115,42 +87,116 @@ def generate_coredns_config(dns: Dict[str, list], ip: str) -> None:
             file.write(f"{tldm[0:-1]}" + " {" + f"\n  file /root/db.{tldm}txt\n  log\n" + "}\n")
 
 
-def generate_openssl_configs(dns: Dict[str, list]):
-    Path("ssl").mkdir(exist_ok=True)
+def generate_ca_files():
+    pkey = crypto.PKey()
+    pkey.generate_key(crypto.TYPE_RSA, 2048)
 
+    ca = crypto.X509()
+    ca.set_pubkey(pkey)
+
+    ca.get_subject().C = "US"
+    ca.get_subject().ST = "Somewhere"
+    ca.get_subject().L = "Somehere"
+    ca.get_subject().O = "EvilCorp"
+    ca.get_subject().CN = "benign.company"
+
+    ca.set_issuer(ca.get_subject())
+
+    ca.gmtime_adj_notBefore(0)
+    ca.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
+
+    ca.add_extensions([
+        crypto.X509Extension(b"basicConstraints", True, b"CA:TRUE"),
+        crypto.X509Extension(b"keyUsage", False, b"keyCertSign, cRLSign"),
+        crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject=ca),
+    ])
+
+    ca.add_extensions([
+        crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer=ca)
+    ])
+
+    ca.sign(pkey, "sha256")
+
+    pem = crypto.dump_certificate(crypto.FILETYPE_PEM, ca)
+    key = crypto.dump_privatekey(crypto.FILETYPE_PEM, pkey)
+
+    with open("ssl/CA.key", "wb") as file:
+        file.write(key)
+
+    with open("ssl/CA.pem", "wb") as file:
+        file.write(pem)
+
+
+def generate_csr_files(dns):
     alt_names = []
     i = 1
     for tldm in dns:
-        alt_names.append(f"DNS.{i} = {tldm[:-1]}")
-        alt_names.append(f"DNS.{i + 1} = *.{tldm[:-1]}")
+        alt_names.append(f"DNS.{i}:{tldm[:-1]}".encode())
+        alt_names.append(f"DNS.{i + 1}:*.{tldm[:-1]}".encode())
         i += 2
 
-    with open("ssl/san.cnf", "w") as file:
-        file.write(SAN_CNF_TEMPLATE.replace("[ALT_NAMES_HERE]", "\n".join(alt_names)))
-    with open("ssl/webcert.ext", "w") as file:
-        file.write(WEBCERT_EXT_TEMPLATE.replace("[ALT_NAMES_HERE]", "\n".join(alt_names)))
+    pkey = crypto.PKey()
+    pkey.generate_key(crypto.TYPE_RSA, 2048)
 
+    csr = crypto.X509Req()
+    csr.set_pubkey(pkey)
+    csr.get_subject().C = "XX"
+    csr.get_subject().ST = "Nowhere"
+    csr.get_subject().L = "Nowhere"
+    csr.get_subject().O = "SneakyCorp"
+    csr.get_subject().CN = "fake.server.io"
+    csr.add_extensions([
+        crypto.X509Extension(b"subjectAltName", False, b", ".join(alt_names))
+    ])
 
-def generate_ca_files():
-    rc, result = run_shell_command('openssl req -subj "/C=CN/ST=Somewhere/L=Somewhere/O=EvilCorp/CN=evil.ca" -x509 -new -newkey rsa:2048 -nodes -keyout ssl/CA.key -sha256 -days 300 -out ssl/CA.pem')
-    if rc != 0:
-        print("Failed to generate CA.pem")
-        exit()
+    csr.sign(pkey, "sha256")
 
+    pem = crypto.dump_certificate_request(crypto.FILETYPE_PEM, csr)
+    server_key = crypto.dump_privatekey(crypto.FILETYPE_PEM, pkey)
 
-def generate_csr_files():
-    rc, result = run_shell_command('openssl req -subj "/C=XX/ST=Nowhere/L=Nowhere/O=SneakyCorp/CN=fake.server.com" -new -newkey rsa:2048 -nodes -keyout ssl/server.key -out ssl/server.csr -config ssl/san.cnf')
-    if rc != 0:
-        print("Failed to generate server.csr")
-        exit()
+    with open("ssl/server.key", "wb") as file:
+        file.write(server_key)
+
+    with open("ssl/server.csr", "wb") as file:
+        file.write(pem)
 
 
 def generate_self_signed_cert():
-    rc, result = run_shell_command("openssl x509 -req -in ssl/server.csr -CA ssl/CA.pem -CAkey ssl/CA.key -CAcreateserial -out ssl/server.pem -days 180 -sha256 -extfile ssl/webcert.ext")
-    if rc != 0:
-        print(rc, result)
-        print("Failed to generate server.pem")
-        exit()
+    with open("ssl/CA.pem", "rb") as file:
+        ca_pem = crypto.load_certificate(crypto.FILETYPE_PEM, file.read())
+    with open("ssl/CA.key", "rb") as file:
+        ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, file.read())
+    with open("ssl/server.csr", "rb") as file:
+        csr = crypto.load_certificate_request(crypto.FILETYPE_PEM, file.read())
+
+    cert = crypto.X509()
+    cert.set_pubkey(csr.get_pubkey())
+    cert.set_subject(csr.get_subject())
+    cert.set_issuer(ca_pem.get_subject())
+    cert.gmtime_adj_notBefore(0)
+    cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
+    cert.set_serial_number(random.randint(10041,999999999))
+    cert.add_extensions(csr.get_extensions())
+
+    cert.add_extensions([
+        crypto.X509Extension(b"basicConstraints", False, b"CA:FALSE"),
+        crypto.X509Extension(b"keyUsage", False, b"Digital Signature, Non Repudiation, Key Encipherment, Data Encipherment"),
+    ])
+
+    cert.add_extensions([
+        crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer=ca_pem)
+    ])
+
+    cert.sign(ca_key, "sha256")
+
+    with open("ssl/server.pem", "wb") as file:
+        file.write(crypto.dump_certificate(crypto.FILETYPE_PEM, cert))
+
+    # rc, result = run_shell_command("openssl x509 -req -in ssl/server.csr -CA ssl/CA.pem -CAkey ssl/CA.key -CAcreateserial -out ssl/server.pem -days 180 -sha256 -extfile ssl/webcert.ext")
+    # if rc != 0:
+    #     print(rc, result)
+    #     print("Failed to generate server.pem")
+    #     exit()
 
 
 if __name__ == "__main__":
@@ -172,9 +218,8 @@ if __name__ == "__main__":
     dns = get_target_dns_queries(baseline_pcap, target_pcap)
 
     generate_coredns_config(dns, ip)
-    generate_openssl_configs(dns)
     generate_ca_files()
-    generate_csr_files()
+    generate_csr_files(dns)
     generate_self_signed_cert()
 
     print()

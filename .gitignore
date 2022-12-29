@@ -1,0 +1,4 @@
+*.pcap
+.idea
+ssl
+coredns

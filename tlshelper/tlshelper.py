@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import string
-
 import sys
+from collections import defaultdict
+
 from pathlib import Path
+import random
 from typing import Set, Dict
+
 
 from OpenSSL import crypto
 
@@ -28,6 +31,10 @@ VALID_CHARS = string.ascii_letters + string.digits + ".-_"
 
 
 def get_unique_dns_queries_from_pcap(pcap: str) -> Set:
+    # Defer these imports to this function, as they take time to load!
+    from scapy.layers.dns import DNSQR
+    from scapy.utils import rdpcap
+
     dns_queries = set()
     pcap = rdpcap(pcap)
     for packet in pcap:
@@ -181,7 +188,7 @@ def generate_self_signed_cert():
         file.write(crypto.dump_certificate(crypto.FILETYPE_PEM, cert))
 
 
-if __name__ == "__main__":
+def main():
     if len(sys.argv) < 4:
         print()
         print(f"Usage: {sys.argv[0]} IP_ADDRESS BASELINE_PCAP TARGET_PCAP\n")
@@ -190,8 +197,7 @@ if __name__ == "__main__":
               f"    TARGET_PCAP: A pcap that was collected after target activity has occurred\n")
         exit()
 
-    from scapy.all import *
-    from scapy.layers.dns import DNSQR
+
 
     Path("coredns").mkdir(exist_ok=True)
     Path("tls").mkdir(exist_ok=True)
@@ -213,3 +219,6 @@ if __name__ == "__main__":
     print("[!] SSL CA, CSR, and server certs are located in ./tls")
     print("[!]     1.) Create a web server that uses server.key and server.pem")
     print("[!]     2.) Load CA.pem as a trusted cert on your target device")
+
+if __name__ == '__main__':
+    main()

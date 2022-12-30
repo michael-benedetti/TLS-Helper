@@ -1,13 +1,11 @@
 from __future__ import annotations
 
+import random
 import string
 import sys
 from collections import defaultdict
-
 from pathlib import Path
-import random
 from typing import Set, Dict
-
 
 from OpenSSL import crypto
 
@@ -170,12 +168,16 @@ def generate_self_signed_cert():
     cert.set_issuer(ca_pem.get_subject())
     cert.gmtime_adj_notBefore(0)
     cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
-    cert.set_serial_number(random.randint(10041,999999999))
+    cert.set_serial_number(random.randint(10041, 999999999))
     cert.add_extensions(csr.get_extensions())
 
     cert.add_extensions([
         crypto.X509Extension(b"basicConstraints", False, b"CA:FALSE"),
-        crypto.X509Extension(b"keyUsage", False, b"Digital Signature, Non Repudiation, Key Encipherment, Data Encipherment"),
+        crypto.X509Extension(
+            b"keyUsage",
+            False,
+            b"Digital Signature, Non Repudiation, Key Encipherment, Data Encipherment"
+        ),
     ])
 
     cert.add_extensions([
@@ -197,8 +199,6 @@ def main():
               f"    TARGET_PCAP: A pcap that was collected after target activity has occurred\n")
         exit()
 
-
-
     Path("coredns").mkdir(exist_ok=True)
     Path("tls").mkdir(exist_ok=True)
 
@@ -219,6 +219,7 @@ def main():
     print("[!] SSL CA, CSR, and server certs are located in ./tls")
     print("[!]     1.) Create a web server that uses server.key and server.pem")
     print("[!]     2.) Load CA.pem as a trusted cert on your target device")
+
 
 if __name__ == '__main__':
     main()

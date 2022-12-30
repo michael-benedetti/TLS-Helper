@@ -23,6 +23,10 @@ automatically.  See [setup.py](setup.py) for the full list of dependencies.
 
 ## Installation
 
+Run `python3 -m pip install git+https://github.com/michael-benedetti/TLS-Helper`
+
+OR
+
 Clone this repository and run `python3 -m pip install .`
 
 Following installation, you may need to add the location of the emitted command line utility to your `PATH`.  See the

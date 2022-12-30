@@ -1,24 +1,26 @@
+import sys
+
 from OpenSSL import crypto
 import random
 
 
-def generate_ca_files():
+def generate_ca_files(ca_country, ca_state, ca_locality, ca_organization, ca_common_name, ca_expire_days):
     pkey = crypto.PKey()
     pkey.generate_key(crypto.TYPE_RSA, 2048)
 
     ca = crypto.X509()
     ca.set_pubkey(pkey)
 
-    ca.get_subject().countryName = "US"
-    ca.get_subject().stateOrProvinceName = "Somewhere"
-    ca.get_subject().localityName = "Somehere"
-    ca.get_subject().organizationName = "EvilCorp"
-    ca.get_subject().commonName = "benign.company"
+    ca.get_subject().countryName = ca_country
+    ca.get_subject().stateOrProvinceName = ca_state
+    ca.get_subject().localityName = ca_locality
+    ca.get_subject().organizationName = ca_organization
+    ca.get_subject().commonName = ca_common_name
 
     ca.set_issuer(ca.get_subject())
 
     ca.gmtime_adj_notBefore(0)
-    ca.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
+    ca.gmtime_adj_notAfter(ca_expire_days * 24 * 60 * 60)
 
     ca.add_extensions([
         crypto.X509Extension(b"basicConstraints", True, b"CA:TRUE"),
@@ -42,7 +44,7 @@ def generate_ca_files():
         file.write(pem)
 
 
-def generate_csr_files(dns):
+def generate_csr_files(dns,  server_country, server_state, server_locality, server_organization, server_common_name):
     alt_names = []
     i = 1
     for tldm in dns:
@@ -55,11 +57,11 @@ def generate_csr_files(dns):
 
     csr = crypto.X509Req()
     csr.set_pubkey(pkey)
-    csr.get_subject().countryName = "XX"
-    csr.get_subject().stateOrProvinceName = "Nowhere"
-    csr.get_subject().localityName = "Nowhere"
-    csr.get_subject().organizationName = "SneakyCorp"
-    csr.get_subject().commonName = "fake.server.io"
+    csr.get_subject().countryName = server_country
+    csr.get_subject().stateOrProvinceName = server_state
+    csr.get_subject().localityName = server_locality
+    csr.get_subject().organizationName = server_organization
+    csr.get_subject().commonName = server_common_name
     csr.add_extensions([
         crypto.X509Extension(b"subjectAltName", False, b", ".join(alt_names))
     ])
@@ -76,7 +78,7 @@ def generate_csr_files(dns):
         file.write(pem)
 
 
-def generate_self_signed_cert():
+def generate_self_signed_cert(server_expire_days):
     with open("tls/CA.pem", "rb") as file:
         ca_pem = crypto.load_certificate(crypto.FILETYPE_PEM, file.read())
     with open("tls/CA.key", "rb") as file:
@@ -89,8 +91,8 @@ def generate_self_signed_cert():
     cert.set_subject(csr.get_subject())
     cert.set_issuer(ca_pem.get_subject())
     cert.gmtime_adj_notBefore(0)
-    cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
-    cert.set_serial_number(random.randint(10041, 999999999))
+    cert.gmtime_adj_notAfter(server_expire_days * 24 * 60 * 60)
+    cert.set_serial_number(random.randint(0, sys.maxsize))
     cert.add_extensions(csr.get_extensions())
 
     cert.add_extensions([

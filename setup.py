@@ -7,7 +7,8 @@ setup(
         'pyOpenSsl==22.1.0',
         'wheel==0.38.4',
         'scapy==2.5.0',
-        'click==8.1.3'
+        'click==8.1.3',
+        'click-option-group==0.5.5',
     ],
     packages=find_packages(
         include=["tlshelper", "tlshelper*"],

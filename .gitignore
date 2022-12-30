@@ -1,4 +1,8 @@
 *.pcap
 .idea
 ssl
+tls
 coredns
+*.key
+*.pem
+*.csr

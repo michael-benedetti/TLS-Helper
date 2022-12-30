@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import string
-from subprocess import Popen, PIPE
 
 import sys
 from pathlib import Path
@@ -26,17 +25,6 @@ $ORIGIN [TOPLEVEL]
 """
 
 VALID_CHARS = string.ascii_letters + string.digits + ".-_"
-
-
-def run_shell_command(cmd: str) -> tuple[int, str]:
-    """
-    Run a shell command and return the utf-8 output
-    :param cmd: shell command to run as a list
-    :return: command output in utf-8
-    """
-    with Popen(cmd, stdout=PIPE, stderr=PIPE, shell=True) as proc:
-        output = proc.communicate()[0].decode()
-        return proc.returncode, output
 
 
 def get_unique_dns_queries_from_pcap(pcap: str) -> Set:
@@ -69,22 +57,22 @@ def get_target_dns_queries(baseline_pcap: str, target_pcap: str) -> Dict[str, li
 
 
 def generate_coredns_config(dns: Dict[str, list], ip: str) -> None:
-    Path("coredns").mkdir(exist_ok=True)
     for tldm, entries in dns.items():
         formatted_entries = []
+        entries = sorted(entries, key=len)
         for entry in entries:
             formatted_entries.append(f"{'.'.join(entry.split('.')[0:-3])}\tIN A\t{ip}\n\t\tIN AAAA ::1")
 
-        t = COREDNS_TEMPLATE
-        t = t.replace("[TOPLEVEL]", tldm)
-        t = t.replace("[ENTRIES]", "\n".join(formatted_entries))
+        domain_config = COREDNS_TEMPLATE
+        domain_config = domain_config.replace("[TOPLEVEL]", tldm)
+        domain_config = domain_config.replace("[ENTRIES]", "\n".join(formatted_entries))
 
         with open(f"coredns/db.{tldm}txt", "w") as file:
-            file.write(t)
+            file.write(domain_config)
 
-        with open("coredns/Corefile", "w") as file:
-            for tldm in dns: \
-            file.write(f"{tldm[0:-1]}" + " {" + f"\n  file /root/db.{tldm}txt\n  log\n" + "}\n")
+    with open("coredns/Corefile", "w") as file:
+        for tldm in dns:
+            file.write(f"{tldm[0:-1]}" + " {" + f"\n  file /coreconfig/db.{tldm}txt\n  log\n" + "}\n")
 
 
 def generate_ca_files():
@@ -120,10 +108,10 @@ def generate_ca_files():
     pem = crypto.dump_certificate(crypto.FILETYPE_PEM, ca)
     key = crypto.dump_privatekey(crypto.FILETYPE_PEM, pkey)
 
-    with open("ssl/CA.key", "wb") as file:
+    with open("tls/CA.key", "wb") as file:
         file.write(key)
 
-    with open("ssl/CA.pem", "wb") as file:
+    with open("tls/CA.pem", "wb") as file:
         file.write(pem)
 
 
@@ -154,19 +142,19 @@ def generate_csr_files(dns):
     pem = crypto.dump_certificate_request(crypto.FILETYPE_PEM, csr)
     server_key = crypto.dump_privatekey(crypto.FILETYPE_PEM, pkey)
 
-    with open("ssl/server.key", "wb") as file:
+    with open("tls/server.key", "wb") as file:
         file.write(server_key)
 
-    with open("ssl/server.csr", "wb") as file:
+    with open("tls/server.csr", "wb") as file:
         file.write(pem)
 
 
 def generate_self_signed_cert():
-    with open("ssl/CA.pem", "rb") as file:
+    with open("tls/CA.pem", "rb") as file:
         ca_pem = crypto.load_certificate(crypto.FILETYPE_PEM, file.read())
-    with open("ssl/CA.key", "rb") as file:
+    with open("tls/CA.key", "rb") as file:
         ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, file.read())
-    with open("ssl/server.csr", "rb") as file:
+    with open("tls/server.csr", "rb") as file:
         csr = crypto.load_certificate_request(crypto.FILETYPE_PEM, file.read())
 
     cert = crypto.X509()
@@ -189,14 +177,8 @@ def generate_self_signed_cert():
 
     cert.sign(ca_key, "sha256")
 
-    with open("ssl/server.pem", "wb") as file:
+    with open("tls/server.pem", "wb") as file:
         file.write(crypto.dump_certificate(crypto.FILETYPE_PEM, cert))
-
-    # rc, result = run_shell_command("openssl x509 -req -in ssl/server.csr -CA ssl/CA.pem -CAkey ssl/CA.key -CAcreateserial -out ssl/server.pem -days 180 -sha256 -extfile ssl/webcert.ext")
-    # if rc != 0:
-    #     print(rc, result)
-    #     print("Failed to generate server.pem")
-    #     exit()
 
 
 if __name__ == "__main__":
@@ -210,6 +192,9 @@ if __name__ == "__main__":
 
     from scapy.all import *
     from scapy.layers.dns import DNSQR
+
+    Path("coredns").mkdir(exist_ok=True)
+    Path("tls").mkdir(exist_ok=True)
 
     ip = sys.argv[1]
     baseline_pcap = sys.argv[2]
@@ -225,6 +210,6 @@ if __name__ == "__main__":
     print()
     print("[+] Finished parsing DNS logs!")
     print("[!] Coredns config files are located in ./coredns")
-    print("[!] SSL CA, CSR, and server certs are located in ./ssl")
-    print("[!]     1.) Create a web server that uses server.key andserver.pem")
+    print("[!] SSL CA, CSR, and server certs are located in ./tls")
+    print("[!]     1.) Create a web server that uses server.key and server.pem")
     print("[!]     2.) Load CA.pem as a trusted cert on your target device")
